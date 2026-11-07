@@ -991,10 +991,7 @@ where
         let mut sql =
             format!("SELECT * FROM {table} WHERE seq > {read_from} AND seq <= {scanned_through}");
         if has_origin {
-            // Only rows this store's own writers produced. A row that already carries an
-            // origin cluster arrived here by forwarding, and re-forwarding it would loop.
-            // Segments predating the column store NULL, which is a local row.
-            sql.push_str(" AND (cluster IS NULL OR cluster = '')");
+            sql.push_str(&own_rows_predicate(&self.config.cluster));
         }
         let batch_rows = if name == LOG_NAMESPACE_NAME {
             FORWARD_LOG_BATCH_ROWS
@@ -1372,6 +1369,17 @@ fn resume_after_eviction(cursor: i64, min_seq: Option<i64>) -> Option<i64> {
     min_seq
         .filter(|min_seq| cursor + 1 < *min_seq)
         .map(|min_seq| min_seq - 1)
+}
+
+/// The scan predicate that keeps only rows this store's own writers produced.
+///
+/// A row this server wrote carries its own cluster name once the server names its
+/// cluster, and NULL or empty before that (and in segments predating the column).
+/// A row that names any other cluster arrived here by forwarding, and re-forwarding
+/// it would loop.
+fn own_rows_predicate(cluster: &str) -> String {
+    let cluster = cluster.replace('\'', "''");
+    format!(" AND (cluster IS NULL OR cluster = '' OR cluster = '{cluster}')")
 }
 
 /// A double-quoted SQL identifier for `name`, so a dotted namespace (`iris.worker`)
